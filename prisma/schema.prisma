@@ -1,0 +1,46 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// Tabel Guru BK (User)
+model User {
+  id        String    @id @default(uuid())
+  name      String?
+  email     String?   @unique
+  password  String?
+  students  Student[] // Relasi 1 to Many
+}
+
+// Tabel Siswa
+model Student {
+  id                 String         @id @default(uuid())
+  userId             String
+  name               String
+  class              String
+  diagnosticNotes    String?
+  baselineJawPixel   Int?
+  baselineVoiceDb    Int?
+  createdAt          DateTime       @default(now())
+  
+  // Relasi
+  user               User           @relation(fields: [userId], references: [id])
+  motoricScores      MotoricScore[]
+}
+
+// Tabel Log Skor Motorik (Game)
+model MotoricScore {
+  id                 String   @id @default(uuid())
+  studentId          String
+  levelType          String
+  accuracyPercentage Int
+  durationSeconds    Int
+  createdAt          DateTime @default(now())
+
+  // Relasi
+  student            Student  @relation(fields: [studentId], references: [id])
+}
