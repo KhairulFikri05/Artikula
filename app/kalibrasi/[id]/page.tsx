@@ -5,86 +5,106 @@ import Script from "next/script";
 import { simpanKalibrasi } from "../../actions";
 import { useRouter } from "next/navigation";
 
+// Deskripsi pola bentuk mulut setiap vokal
+const VOWEL_GUIDE = [
+  { label: "A", hint: "Buka mulut lebar, rahang turun", emoji: "😮" },
+  { label: "I", hint: "Senyum lebar, bibir melebar", emoji: "😁" },
+  { label: "U", hint: "Moncongkan bibir ke depan", emoji: "😙" },
+  { label: "E", hint: "Bibir santai, celah sedang", emoji: "🙂" },
+  { label: "O", hint: "Bibir bulat seperti donat", emoji: "😮" },
+];
+
 export default function KalibrasiPage({ params }: { params: Promise<{ id: string }> }) {
-  const resolvedParams = use(params); 
+  const resolvedParams = use(params);
   const id = resolvedParams.id;
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [jawDistance, setJawDistance] = useState<number>(0);
   const [voiceDb, setVoiceDb] = useState<number>(0);
   const [isAiReady, setIsAiReady] = useState(false);
-  const router = useRouter();
+
   const [isSaving, setIsSaving] = useState(false);
+  const [step, setStep] = useState<"intro" | "kalibrate" | "done">("intro");
+  const router = useRouter();
 
   const handleSimpan = async () => {
+    if (jawDistance < 5) {
+      alert("Buka mulut dulu ya! Sensor belum mendeteksi bukaan mulut. 🙈");
+      return;
+    }
     setIsSaving(true);
-    // Menyimpan angka Viskom (jawDistance) dan Mic (voiceDb) ke MySQL
+
     const result = await simpanKalibrasi(id, jawDistance, voiceDb);
-    
+
     if (result.success) {
-      router.push(`/game/${id}`); // Lanjut ke Peta Level
+      setStep("done");
+      setTimeout(() => router.push(`/game/${id}`), 2000);
     } else {
-      alert("Gagal menyimpan data.");
+      alert("Gagal menyimpan data. Coba lagi ya!");
       setIsSaving(false);
     }
   };
 
   useEffect(() => {
-    // Jangan jalankan kode AI kalau library MediaPipe belum selesai di-load browser
-    if (!isAiReady) return;
+    if (!isAiReady || step !== "kalibrate") return;
 
     const videoElement = videoRef.current;
     const canvasElement = canvasRef.current;
     if (!videoElement || !canvasElement) return;
-
     const canvasCtx = canvasElement.getContext("2d");
     if (!canvasCtx) return;
 
-    // 1. Ambil FaceMesh langsung dari Window (Bypass error Turbopack Next.js)
     const FaceMesh = (window as any).FaceMesh;
-
-    const faceMesh = new FaceMesh({ 
-      locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}` 
+    const faceMesh = new FaceMesh({
+      locateFile: (file: string) =>
+        `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/${file}`,
     });
-    
     faceMesh.setOptions({
       maxNumFaces: 1,
       refineLandmarks: true,
       minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
+      minTrackingConfidence: 0.5,
     });
 
-    // 2. Logika Deteksi Koordinat Wajah
     faceMesh.onResults((results: any) => {
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
       canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
-      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-        const landmarks = results.multiFaceLandmarks[0];
-        
-        // Titik Bibir Atas (13) dan Bibir Bawah (14)
-        const upperLip = landmarks[13];
-        const lowerLip = landmarks[14];
+      if (results.multiFaceLandmarks?.length > 0) {
+        const lm = results.multiFaceLandmarks[0];
+        const W = canvasElement.width;
+        const H = canvasElement.height;
 
-        const x1 = upperLip.x * canvasElement.width;
-        const y1 = upperLip.y * canvasElement.height;
-        const x2 = lowerLip.x * canvasElement.width;
-        const y2 = lowerLip.y * canvasElement.height;
+        const upperY = lm[13].y * H;
+        const lowerY = lm[14].y * H;
+        const upperX = lm[13].x * W;
+        const lowerX = lm[14].x * W;
+        const dist = Math.abs(lowerY - upperY);
 
-        const distance = Math.abs(y2 - y1); 
-        // Kunci angka Viskom di batas maksimal (Baseline)
-        setJawDistance((prev) => Math.max(prev, Math.round(distance)));
+        // Catat jarak maksimum saat mulut dibuka lebar (baseline)
+        setJawDistance((prev) => Math.max(prev, Math.round(dist)));
 
-        canvasCtx.fillStyle = "#00FF00";
-        canvasCtx.beginPath(); canvasCtx.arc(x1, y1, 4, 0, 2 * Math.PI); canvasCtx.fill();
-        canvasCtx.beginPath(); canvasCtx.arc(x2, y2, 4, 0, 2 * Math.PI); canvasCtx.fill();
-        
-        canvasCtx.strokeStyle = "#00FF00";
-        canvasCtx.lineWidth = 2;
+        // Gambar landmark bibir
+        canvasCtx.fillStyle = dist > 20 ? "#22C55E" : "#F59E0B";
+        canvasCtx.shadowBlur = 8;
+        canvasCtx.shadowColor = canvasCtx.fillStyle;
+        [[upperX, upperY], [lowerX, lowerY]].forEach(([x, y]) => {
+          canvasCtx.beginPath();
+          canvasCtx.arc(x, y, 6, 0, 2 * Math.PI);
+          canvasCtx.fill();
+        });
+        // Garis ukuran
+        canvasCtx.strokeStyle = canvasCtx.fillStyle;
+        canvasCtx.lineWidth = 3;
         canvasCtx.beginPath();
-        canvasCtx.moveTo(x1, y1);
-        canvasCtx.lineTo(x2, y2);
+        canvasCtx.moveTo(upperX, upperY);
+        canvasCtx.lineTo(lowerX, lowerY);
         canvasCtx.stroke();
+        // Label jarak
+        canvasCtx.shadowBlur = 0;
+        canvasCtx.fillStyle = "white";
+        canvasCtx.font = "bold 14px sans-serif";
+        canvasCtx.fillText(`${Math.round(dist)}px`, lowerX + 8, (upperY + lowerY) / 2);
       }
     });
 
@@ -92,115 +112,169 @@ export default function KalibrasiPage({ params }: { params: Promise<{ id: string
     let stream: MediaStream | null = null;
     let audioContext: AudioContext | null = null;
 
-    // 3. Menyalakan Kamera & Mikrofon (Dual-Sensor)
     async function startSensors() {
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        
-        // Setup Audio Analyser
         audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
         const analyser = audioContext.createAnalyser();
-        const microphone = audioContext.createMediaStreamSource(stream);
-        microphone.connect(analyser);
+        const mic = audioContext.createMediaStreamSource(stream);
+        mic.connect(analyser);
         analyser.fftSize = 256;
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        const dataArr = new Uint8Array(analyser.frequencyBinCount);
 
-        videoElement!.srcObject = stream;
-        videoElement!.play();
+        if (videoElement) {
+          videoElement.srcObject = stream;
+          videoElement.play();
+        }
 
-        const sendFrame = async () => {
-          if (!videoElement!.paused && !videoElement!.ended) {
-            await faceMesh.send({ image: videoElement! });
+        const loop = async () => {
+          if (videoElement && !videoElement.paused && !videoElement.ended) {
+            await faceMesh.send({ image: videoElement });
           }
-          
-          // Hitung Volume Mic (Amplitudo frekuensi)
-          analyser.getByteFrequencyData(dataArray);
-          const sum = dataArray.reduce((a, b) => a + b, 0);
-          const average = sum / dataArray.length;
-          // Kunci angka Suara Mic di batas maksimal (Baseline)
-          setVoiceDb((prev) => Math.max(prev, Math.round(average)));
-
-          animationFrameId = requestAnimationFrame(sendFrame);
+          analyser.getByteFrequencyData(dataArr);
+          const avg = dataArr.reduce((a, b) => a + b, 0) / dataArr.length;
+          setVoiceDb((prev) => Math.max(prev, Math.round(avg)));
+          animationFrameId = requestAnimationFrame(loop);
         };
-        
-        videoElement!.onloadeddata = () => {
-          sendFrame();
-        };
-      } catch (error) {
-        console.error("Akses Sensor ditolak/gagal:", error);
+        if (videoElement) videoElement.onloadeddata = () => loop();
+      } catch (err) {
+        console.error("Sensor error:", err);
+        alert("Kamera/mikrofon tidak dapat diakses. Pastikan izin diberikan ya! 🙏");
       }
     }
 
     startSensors();
-
-    // 4. Cleanup function saat komponen di-unmount (mencegah memory/camera leak)
     return () => {
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
-      if (stream) stream.getTracks().forEach((track) => track.stop());
+      if (stream) stream.getTracks().forEach((t) => t.stop());
       if (faceMesh) faceMesh.close();
       if (audioContext) audioContext.close();
     };
-  }, [isAiReady]); // useEffect ini akan menyala ulang setelah AI siap
+  }, [isAiReady, step]);
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-sky-200 text-slate-800 p-4 font-sans">
-      {/* Script injeksi langsung ke CDN untuk menghindari error Turbopack */}
-      <Script 
-        src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" 
-        onReady={() => setIsAiReady(true)} 
+    <div className="flex flex-col items-center justify-center min-h-screen bg-linear-to-b from-indigo-500 via-purple-600 to-pink-700 p-6 font-sans">
+      <Script
+        src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/face_mesh.js"
+        crossOrigin="anonymous"
+        onReady={() => setIsAiReady(true)}
       />
 
-      {/* Judul & Panduan Suara/Teks (Krusial) */}
-      <div className="text-center mb-6">
-        <h1 className="text-4xl md:text-5xl font-extrabold text-indigo-700 drop-shadow-md mb-4">
-          Ruang Kalibrasi
-        </h1>
-        <p className="text-2xl font-bold text-orange-600 bg-white/80 px-8 py-4 rounded-full shadow-sm inline-block animate-bounce">
-          "Buka mulutmu lebar-lebar dan bersuara Aaaaa!" 📢
-        </p>
-      </div>
-      
-      {!isAiReady && (
-        <div className="animate-pulse text-indigo-600 font-bold text-xl mb-4">Mempersiapkan Sensor Ajaib... ✨</div>
+      {/* ── INTRO ── */}
+      {step === "intro" && (
+        <div className="max-w-lg w-full bg-white/20 backdrop-blur-xl rounded-[3rem] border-8 border-white/40 shadow-2xl p-10 text-center space-y-6">
+          <div className="text-8xl animate-bounce">⚙️</div>
+          <h1 className="text-4xl font-black text-yellow-300">Ruang Kalibrasi</h1>
+          <p className="text-white/90 font-bold text-lg">
+            Kita akan belajar mengenali <span className="text-yellow-200">bentuk mulutmu</span> untuk 5 huruf vokal! 🎤
+          </p>
+          {/* Panduan vokal */}
+          <div className="grid grid-cols-5 gap-2">
+            {VOWEL_GUIDE.map((v) => (
+              <div key={v.label} className="bg-white/20 rounded-2xl p-3 text-center">
+                <div className="text-2xl">{v.emoji}</div>
+                <div className="text-white font-black text-lg">{v.label}</div>
+                <div className="text-white/60 text-xs">{v.hint}</div>
+              </div>
+            ))}
+          </div>
+          <p className="text-white/70 text-sm font-bold">
+            💡 Nanti kamu akan diminta membuka mulut lebar sambil bersuara <span className="text-yellow-200">"Aaaaa!"</span> supaya sensor bisa belajar ukuran mulutmu.
+          </p>
+          {!isAiReady ? (
+            <div className="bg-white/10 rounded-2xl p-4 text-center">
+              <div className="text-3xl mb-2 animate-spin">⚙️</div>
+              <p className="text-white/80 font-bold text-sm">Memuat Sensor AI...</p>
+            </div>
+          ) : (
+            <button
+              onClick={() => setStep("kalibrate")}
+              className="w-full bg-linear-to-r from-green-400 to-emerald-600 border-b-8 border-green-700 text-white font-black text-2xl py-6 rounded-3xl shadow-xl active:border-b-0 active:translate-y-2 transition-all"
+            >
+              MULAI KALIBRASI! 🚀
+            </button>
+          )}
+        </div>
       )}
 
-      <div className={`relative ${!isAiReady ? 'hidden' : ''}`}>
-        <video ref={videoRef} className="hidden" playsInline />
-        <canvas 
-          ref={canvasRef} 
-          width="640" 
-          height="480" 
-          className="rounded-3xl shadow-2xl border-8 border-indigo-400 bg-black scale-x-[-1] max-w-full h-auto" 
-        />
-      </div>
-
-      <div className="flex flex-wrap gap-6 mt-8 justify-center w-full max-w-2xl">
-        {/* Kotak Sensor Viskom */}
-        <div className="flex-1 text-center bg-white px-6 py-6 rounded-3xl border-b-8 border-green-500 shadow-xl">
-          <h2 className="text-xl font-bold text-slate-500 uppercase">Jarak Bibir</h2>
-          <div className="flex items-baseline justify-center gap-2 mt-1">
-            <span className="text-6xl font-black text-green-500">{jawDistance}</span>
-            <span className="text-2xl font-bold text-green-700">px</span>
+      {/* ── KALIBRASI ── */}
+      {step === "kalibrate" && (
+        <div className="max-w-2xl w-full space-y-6">
+          <div className="text-center">
+            <h1 className="text-4xl font-black text-yellow-300 drop-shadow-md mb-2">Ruang Kalibrasi</h1>
+            <div className="inline-block bg-white/20 px-6 py-3 rounded-full text-white font-black text-xl animate-bounce border-4 border-yellow-300/50">
+              "Buka mulutmu lebar-lebar dan bersuara A...!" 📢
+            </div>
           </div>
-        </div>
 
-        {/* Kotak Sensor Audio (Desibel) */}
-        <div className="flex-1 text-center bg-white px-6 py-6 rounded-3xl border-b-8 border-blue-500 shadow-xl">
-          <h2 className="text-xl font-bold text-slate-500 uppercase">Suara Mic</h2>
-          <div className="flex items-baseline justify-center gap-2 mt-1">
-            <span className="text-6xl font-black text-blue-500">{voiceDb}</span>
-            <span className="text-2xl font-bold text-blue-700">dB</span>
+          <div className="relative">
+            <video ref={videoRef} className="hidden" playsInline />
+            <canvas
+              ref={canvasRef}
+              width="640"
+              height="480"
+              className="w-full rounded-3xl shadow-2xl border-8 border-indigo-400 bg-black scale-x-[-1]"
+            />
+            {/* Overlay status */}
+            <div className={`absolute top-4 left-1/2 -translate-x-1/2 px-5 py-2 rounded-full font-black text-sm ${jawDistance > 20 ? "bg-green-500 text-white" : "bg-yellow-400 text-yellow-900"}`}>
+              {jawDistance > 20 ? "✅ Terdeteksi!" : "👄 Buka mulutmu..."}
+            </div>
           </div>
-        </div>
-      </div>
 
-      <button 
-        onClick={handleSimpan}
-        disabled={isSaving || (jawDistance === 0 && voiceDb === 0)}
-        className="mt-10 bg-gradient-to-r from-orange-400 to-red-500 hover:from-orange-500 hover:to-red-600 text-white px-12 py-5 rounded-full font-black text-3xl shadow-[0_10px_0_rgb(185,28,28)] active:shadow-[0_0px_0_rgb(185,28,28)] active:translate-y-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase tracking-wider"
-      >
-        {isSaving ? "Menyimpan..." : "MULAI PETUALANGAN!"}
-      </button>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-white/20 backdrop-blur-md rounded-3xl p-6 text-center border-4 border-green-300">
+              <p className="text-white/70 font-black text-xs uppercase mb-1">📐 Jarak Bibir</p>
+              <div className="text-5xl font-black text-green-300">{jawDistance}</div>
+              <div className="text-white/60 text-sm font-bold">px</div>
+              <div className="w-full bg-white/20 rounded-full h-3 mt-2 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${jawDistance > 20 ? "bg-green-400" : "bg-yellow-400"}`}
+                  style={{ width: `${Math.min((jawDistance / 120) * 100, 100)}%` }}
+                />
+              </div>
+            </div>
+            <div className="bg-white/20 backdrop-blur-md rounded-3xl p-6 text-center border-4 border-blue-300">
+              <p className="text-white/70 font-black text-xs uppercase mb-1">🎤 Suara Mic</p>
+              <div className="text-5xl font-black text-blue-300">{voiceDb}</div>
+              <div className="text-white/60 text-sm font-bold">level</div>
+              <div className="w-full bg-white/20 rounded-full h-3 mt-2 overflow-hidden">
+                <div
+                  className="bg-blue-400 h-full rounded-full transition-all"
+                  style={{ width: `${Math.min((voiceDb / 128) * 100, 100)}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={handleSimpan}
+            disabled={isSaving || jawDistance < 5}
+            className="w-full bg-linear-to-r from-orange-400 to-red-500 border-b-8 border-red-700 text-white font-black text-2xl py-6 rounded-3xl shadow-xl active:border-b-0 active:translate-y-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase"
+          >
+            {isSaving ? "Menyimpan... ⏳" : jawDistance < 5 ? "Buka mulutmu dulu! 👄" : "MULAI PETUALANGAN! 🚀"}
+          </button>
+        </div>
+      )}
+
+      {/* ── DONE ── */}
+      {step === "done" && (
+        <div className="max-w-md w-full bg-white/20 backdrop-blur-xl rounded-[3rem] border-8 border-green-400 shadow-2xl p-10 text-center space-y-6">
+          <div className="text-8xl animate-bounce">🎉</div>
+          <h2 className="text-4xl font-black text-green-300">Kalibrasi Berhasil!</h2>
+          <p className="text-white/80 font-bold">Sensor sudah mengenal mulutmu. Kita siap petualangan! 🚀</p>
+          <div className="grid grid-cols-2 gap-4 text-center">
+            <div className="bg-white/20 rounded-2xl p-4">
+              <div className="text-3xl font-black text-green-300">{jawDistance}px</div>
+              <div className="text-white/60 text-xs">Jarak Bibir</div>
+            </div>
+            <div className="bg-white/20 rounded-2xl p-4">
+              <div className="text-3xl font-black text-blue-300">{voiceDb}</div>
+              <div className="text-white/60 text-xs">Level Suara</div>
+            </div>
+          </div>
+          <div className="text-white/60 text-sm animate-pulse">Memuat game... ⚙️</div>
+        </div>
+      )}
     </div>
   );
 }

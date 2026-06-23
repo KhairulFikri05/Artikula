@@ -26,9 +26,9 @@ export default function FormTambahSiswa() {
         </select>
       </div>
 
-      {/* Catatan Diagnostik yang disesuaikan */}
+      {/* Catatan Diagnostik Awal untuk Baseline Pre-Test */}
       <textarea 
-        name="diagnosticNotes" 
+        name="notes" 
         placeholder="Catatan Diagnostik Awal (Contoh: Kesulitan melafalkan huruf R dan S)" 
         className="w-full p-4 mt-4 border rounded-lg h-32 focus:ring-2 focus:ring-blue-500 outline-none resize-none bg-slate-50 italic text-slate-600"
       ></textarea>

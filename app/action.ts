@@ -85,3 +85,21 @@ export async function simpanSkorGame(studentId: string, accuracy: number, durati
     return { error: "Gagal mencatat skor ke database" };
   }
 }
+
+export async function getAnalisisPerkembangan(studentId: string) {
+  try {
+    const scores = await prisma.motoricScore.findMany({
+      where: { studentId: studentId },
+      orderBy: { createdAt: 'asc' }
+    });
+    
+    // Manajemen Kelas: Memisahkan Pre-Test (Bab Biasa) dan Hasil Akhir Post-Test (Bab 5)
+    const preTestScores = scores.filter(s => !s.levelType.includes("Bab 5"));
+    const postTestScores = scores.filter(s => s.levelType.includes("Bab 5"));
+    
+    return { success: true, preTestScores, postTestScores };
+  } catch (error) {
+    console.error("Gagal mengambil data analitik:", error);
+    return { error: "Gagal memuat analitik siswa untuk Dashboard" };
+  }
+}
